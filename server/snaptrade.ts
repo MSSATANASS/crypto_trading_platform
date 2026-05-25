@@ -171,14 +171,20 @@ export async function validateSnapTradeUser(userId: string): Promise<boolean> {
   }
 }
 
-export async function getConnectionPortalUrl(userId: string): Promise<string> {
+export async function getConnectionPortalUrl(
+  userId: string,
+  redirectUri?: string
+): Promise<string> {
   try {
     const client = getSnapTradeClient();
     const response = await client.post<{ portal_url: string }>(
       `/users/${userId}/connections/portal`,
       {
         brokerage: "COINBASE",
-        redirect_uri: process.env.VITE_SNAPTRADE_REDIRECT_URI,
+        redirect_uri:
+          redirectUri ??
+          process.env.VITE_SNAPTRADE_REDIRECT_URI ??
+          "http://localhost:3000/api/auth/snaptrade/callback",
       }
     );
 

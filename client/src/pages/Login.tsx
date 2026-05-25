@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+/**
+ * UPDATED client/src/pages/Login.tsx
+ * 
+ * Replace the existing Login.tsx with this version
+ * This version uses SnapTrade instead of Stytch for Coinbase OAuth
+ */
+
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -7,26 +14,20 @@ import { Loader2, Shield, TrendingUp, Zap, Lock } from "lucide-react";
 
 declare global {
   interface Window {
-    Stytch?: {
-      initialize: (token: string) => {
-        oauth: {
-          coinbase: {
-            start: (opts: { login_redirect_url: string; signup_redirect_url: string }) => void;
-          };
-        };
-      };
-    };
+    SnapTrade?: unknown;
   }
 }
 
-const STYTCH_PUBLIC_TOKEN = import.meta.env.VITE_STYTCH_PUBLIC_TOKEN as string;
+const SNAPTRADE_REDIRECT_URI = import.meta.env
+  .VITE_SNAPTRADE_REDIRECT_URI as string;
 
 export default function Login() {
   const [, navigate] = useLocation();
   const { isAuthenticated, loading } = useAuth();
   const [authLoading, setAuthLoading] = useState(false);
-  const stytchCallbackMutation = trpc.auth.stytchCallback.useMutation();
-  const stytchRef = useRef<ReturnType<NonNullable<typeof window.Stytch>["initialize"]> | null>(null);
+  const createPortalMutation = trpc.auth.createSnapTradePortal.useMutation();
+  const snaptradeCallbackMutation =
+    trpc.auth.snaptradeCallback.useMutation();
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -35,70 +36,66 @@ export default function Login() {
     }
   }, [isAuthenticated, loading, navigate]);
 
-  // Handle Stytch OAuth callback token in URL
+  // Handle SnapTrade OAuth callback token in URL (if using HTTP callback route)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
-    const tokenType = params.get("stytch_token_type");
+    const userId = params.get("userId");
 
-    if (token && tokenType === "oauth") {
+    // This is optional - you can use either tRPC or HTTP callback
+    // If using HTTP callback, the redirect happens server-side
+    if (token && userId) {
       setAuthLoading(true);
-      stytchCallbackMutation
+      snaptradeCallbackMutation
         .mutateAsync({
-          token,
-          tokenType: "oauth",
+          snapTradeUserId: userId,
           origin: window.location.origin,
         })
         .then((result) => {
           if (result.success) {
-            // Store JWT in localStorage for API calls
             localStorage.setItem("auth_jwt", result.jwt);
             toast.success(
               result.isNewUser
                 ? `Bienvenido, ${result.user.name ?? "usuario"}. Cuenta creada exitosamente.`
                 : `Sesión iniciada. Bienvenido de vuelta, ${result.user.name ?? "usuario"}.`
             );
-            // Force page reload to pick up new session cookie
             window.location.href = "/dashboard";
           }
         })
         .catch((err) => {
-          toast.error("Error de autenticación: " + (err.message ?? "Inténtalo de nuevo."));
+          toast.error(
+            "Error de autenticación: " +
+              (err.message ?? "Inténtalo de nuevo.")
+          );
           setAuthLoading(false);
-          // Clean URL
           window.history.replaceState({}, "", "/login");
         });
     }
   }, []);
 
-  const handleCoinbaseLogin = () => {
-    if (!STYTCH_PUBLIC_TOKEN) {
-      toast.error("Configuración de autenticación no disponible.");
+  const handleCoinbaseLogin = async () => {
+    if (!SNAPTRADE_REDIRECT_URI) {
+      toast.error("Configuración de SnapTrade no disponible.");
       return;
     }
 
-    const redirectUrl = `${window.location.origin}/login`;
+    setAuthLoading(true);
 
-    // Use Stytch SDK via CDN script
-    const stytch = (window as unknown as Record<string, unknown>)["stytch"] as
-      | {
-          oauth: {
-            coinbase: {
-              start: (opts: { login_redirect_url: string; signup_redirect_url: string }) => void;
-            };
-          };
-        }
-      | undefined;
-
-    if (stytch?.oauth?.coinbase) {
-      stytch.oauth.coinbase.start({
-        login_redirect_url: redirectUrl,
-        signup_redirect_url: redirectUrl,
+    try {
+      const tempUserId = `temp_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 11)}`;
+      const result = await createPortalMutation.mutateAsync({
+        snapTradeUserId: tempUserId,
+        origin: window.location.origin,
       });
-    } else {
-      // Fallback: direct Stytch OAuth URL
-      const stytchOAuthUrl = `https://api.stytch.com/v1/public/oauth/coinbase/start?public_token=${STYTCH_PUBLIC_TOKEN}&login_redirect_url=${encodeURIComponent(redirectUrl)}&signup_redirect_url=${encodeURIComponent(redirectUrl)}`;
-      window.location.href = stytchOAuthUrl;
+      window.location.href = result.portalUrl;
+    } catch (error) {
+      toast.error(
+        "Error al iniciar el flujo de autenticación: " +
+          (error instanceof Error ? error.message : "Inténtalo de nuevo.")
+      );
+      setAuthLoading(false);
     }
   };
 
@@ -112,7 +109,9 @@ export default function Login() {
             </div>
           </div>
           <p className="text-muted-foreground text-sm">
-            {authLoading ? "Verificando credenciales..." : "Cargando..."}
+            {authLoading
+              ? "Verificando credenciales..."
+              : "Cargando..."}
           </p>
         </div>
       </div>
@@ -240,16 +239,19 @@ export default function Login() {
             {/* Coinbase OAuth button */}
             <button
               onClick={handleCoinbaseLogin}
-              className="w-full flex items-center justify-center gap-3 h-14 rounded-xl font-semibold text-base transition-all duration-200 relative overflow-hidden group"
+              disabled={authLoading}
+              className="w-full flex items-center justify-center gap-3 h-14 rounded-xl font-semibold text-base transition-all duration-200 relative overflow-hidden group disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
                 background: "linear-gradient(135deg, oklch(0.16 0.015 240), oklch(0.20 0.015 240))",
                 border: "1px solid oklch(0.28 0.015 240)",
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "oklch(0.65 0.18 145 / 0.5)";
-                (e.currentTarget as HTMLButtonElement).style.boxShadow =
-                  "0 0 20px oklch(0.65 0.18 145 / 0.15)";
+                if (!authLoading) {
+                  (e.currentTarget as HTMLButtonElement).style.borderColor =
+                    "oklch(0.65 0.18 145 / 0.5)";
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow =
+                    "0 0 20px oklch(0.65 0.18 145 / 0.15)";
+                }
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.borderColor =
@@ -274,7 +276,7 @@ export default function Login() {
               </div>
               <div className="relative flex justify-center">
                 <span className="px-3 bg-card text-xs text-muted-foreground">
-                  Autenticación segura via OAuth 2.0
+                  Autenticación segura via OAuth 2.0 con SnapTrade
                 </span>
               </div>
             </div>
