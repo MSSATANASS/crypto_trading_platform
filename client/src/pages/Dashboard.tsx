@@ -59,7 +59,7 @@ const PAIRS = ["BTC", "ETH", "SOL", "BNB", "ADA", "XRP", "AVAX", "MATIC", "LINK"
 export default function Dashboard() {
   const [, navigate] = useLocation();
   const { user, isAuthenticated, loading, logout } = useAuth();
-  const { prices, loading: pricesLoading, lastFetch } = useCryptoPrices();
+  const { prices, loading: pricesLoading, lastFetch, error: pricesError, refetch: refetchPrices } = useCryptoPrices();
 
   const [selectedPair, setSelectedPair] = useState("BTC");
   const [tradeSide, setTradeSide] = useState<"buy" | "sell">("buy");
@@ -239,6 +239,29 @@ export default function Dashboard() {
           )}
         </div>
       </header>
+
+      {/* Price feed error banner */}
+      {pricesError && Object.keys(prices).length === 0 && (
+        <div className="bg-destructive/10 border-b border-destructive/30 px-4 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm">
+            <Activity className="w-4 h-4 text-destructive" />
+            <span className="text-destructive font-medium">Feed de precios no disponible</span>
+            <span className="text-muted-foreground hidden sm:inline">— {pricesError}</span>
+          </div>
+          <button
+            onClick={() => refetchPrices()}
+            className="text-xs font-medium px-3 py-1 rounded-md border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors"
+          >
+            <RefreshCw className="w-3 h-3 inline mr-1" />Reintentar
+          </button>
+        </div>
+      )}
+      {pricesError && Object.keys(prices).length > 0 && (
+        <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-1.5 text-xs text-amber-300 flex items-center gap-2">
+          <Clock className="w-3 h-3" />
+          Mostrando últimos precios válidos. Reconectando al feed en tiempo real…
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left sidebar - Asset list */}

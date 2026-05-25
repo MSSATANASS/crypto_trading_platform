@@ -44,9 +44,9 @@
 
 ## Fase 8: Cerrar gaps identificados
 - [x] Crear tabla user_sessions con tracking de sesiones activas
-- [ ] Añadir endpoint HTTP `/api/auth/stytch/callback` que escriba cookie de sesión
+- [x] Añadir endpoint HTTP `/api/auth/stytch/callback` registrado en Express
 - [x] Hacer que el callback de Stytch escriba sesión en user_sessions
-- [ ] Eliminar fallback hardcodeado de precios y manejar estado de error real
+- [x] Eliminar fallback hardcodeado de precios y manejar estado de error real
 - [x] Añadir notificación al owner en trades >= $1000 USD
 - [x] Ampliar tests con flujo exitoso de autenticación
-- [ ] Configurar VITE_STYTCH_PUBLIC_TOKEN
+- [x] Configurar VITE_STYTCH_PUBLIC_TOKEN

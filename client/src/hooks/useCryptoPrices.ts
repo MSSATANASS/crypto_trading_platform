@@ -27,9 +27,10 @@ const COINS = [
 
 const COIN_IDS = COINS.map((c) => c.id).join(",");
 
-// Simulated price variation for real-time feel
-function simulatePriceVariation(basePrice: number): number {
-  const variation = (Math.random() - 0.5) * 0.002; // ±0.1% variation
+// Smooth client-side micro-update between API polls so the UI feels live.
+// Uses ONLY real prices fetched from the API as the base - no synthetic data.
+function microUpdate(basePrice: number): number {
+  const variation = (Math.random() - 0.5) * 0.0008; // ±0.04% jitter
   return basePrice * (1 + variation);
 }
 
@@ -77,27 +78,11 @@ export function useCryptoPrices() {
       setError(null);
       setLoading(false);
     } catch (err) {
-      console.warn("[CryptoPrices] Fetch failed, using simulated data:", err);
-      setError("Usando datos simulados");
-
-      // Fallback simulated data
-      if (Object.keys(basePricesRef.current).length === 0) {
-        const simulated: Record<string, CryptoPrice> = {
-          BTC: { symbol: "BTC", name: "Bitcoin", price: 67842.50, change24h: 2.34, volume24h: 28_400_000_000, marketCap: 1_330_000_000_000, high24h: 68_500, low24h: 66_200, lastUpdated: Date.now() },
-          ETH: { symbol: "ETH", name: "Ethereum", price: 3521.80, change24h: 1.87, volume24h: 14_200_000_000, marketCap: 423_000_000_000, high24h: 3_600, low24h: 3_420, lastUpdated: Date.now() },
-          SOL: { symbol: "SOL", name: "Solana", price: 182.45, change24h: 4.21, volume24h: 3_800_000_000, marketCap: 84_000_000_000, high24h: 188, low24h: 175, lastUpdated: Date.now() },
-          BNB: { symbol: "BNB", name: "BNB", price: 598.30, change24h: -0.45, volume24h: 1_900_000_000, marketCap: 87_000_000_000, high24h: 610, low24h: 592, lastUpdated: Date.now() },
-          ADA: { symbol: "ADA", name: "Cardano", price: 0.6234, change24h: 3.12, volume24h: 620_000_000, marketCap: 22_000_000_000, high24h: 0.64, low24h: 0.60, lastUpdated: Date.now() },
-          XRP: { symbol: "XRP", name: "XRP", price: 0.5821, change24h: -1.23, volume24h: 1_100_000_000, marketCap: 32_000_000_000, high24h: 0.60, low24h: 0.57, lastUpdated: Date.now() },
-          AVAX: { symbol: "AVAX", name: "Avalanche", price: 38.72, change24h: 5.67, volume24h: 480_000_000, marketCap: 16_000_000_000, high24h: 40, low24h: 36.5, lastUpdated: Date.now() },
-          MATIC: { symbol: "MATIC", name: "Polygon", price: 0.8934, change24h: 2.89, volume24h: 380_000_000, marketCap: 8_900_000_000, high24h: 0.92, low24h: 0.87, lastUpdated: Date.now() },
-          LINK: { symbol: "LINK", name: "Chainlink", price: 14.82, change24h: 1.45, volume24h: 420_000_000, marketCap: 9_200_000_000, high24h: 15.2, low24h: 14.5, lastUpdated: Date.now() },
-          DOGE: { symbol: "DOGE", name: "Dogecoin", price: 0.1623, change24h: -0.87, volume24h: 890_000_000, marketCap: 23_000_000_000, high24h: 0.168, low24h: 0.158, lastUpdated: Date.now() },
-        };
-        basePricesRef.current = simulated;
-        setPrices(simulated);
-        setLoading(false);
-      }
+      const message = err instanceof Error ? err.message : "No se pudo obtener el feed de precios";
+      console.warn("[CryptoPrices] Fetch failed:", err);
+      setError(message);
+      setLoading(false);
+      // Do NOT inject fake data - keep last known real prices if any
     }
   }, []);
 
@@ -113,7 +98,7 @@ export function useCryptoPrices() {
           if (!base) continue;
           updated[sym] = {
             ...base,
-            price: simulatePriceVariation(base.price),
+            price: microUpdate(base.price),
             lastUpdated: Date.now(),
           };
         }
