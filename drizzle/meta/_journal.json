@@ -1,5 +1,27 @@
 {
   "version": "7",
   "dialect": "mysql",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1779671089207,
+      "tag": "0000_cynical_blizzard",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1779671237299,
+      "tag": "0001_nosy_ender_wiggin",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1779672799432,
+      "tag": "0002_quiet_randall_flagg",
+      "breakpoints": true
+    }
+  ]
 }

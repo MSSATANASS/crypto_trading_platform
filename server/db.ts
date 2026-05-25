@@ -1,11 +1,27 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import {
+  ActivityLog,
+  InsertActivityLog,
+  InsertPortfolioHolding,
+  InsertTrade,
+  InsertUser,
+  InsertUserSession,
+  PortfolioHolding,
+  Trade,
+  User,
+  UserSession,
+  activityLogs,
+  portfolioHoldings,
+  trades,
+  userSessions,
+  users,
+} from "../drizzle/schema";
+import { isNull } from "drizzle-orm";
+import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -18,10 +34,10 @@ export async function getDb() {
   return _db;
 }
 
+// ─── Users ────────────────────────────────────────────────────────────────────
+
 export async function upsertUser(user: InsertUser): Promise<void> {
-  if (!user.openId) {
-    throw new Error("User openId is required for upsert");
-  }
+  if (!user.openId) throw new Error("User openId is required for upsert");
 
   const db = await getDb();
   if (!db) {
@@ -29,64 +45,209 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     return;
   }
 
-  try {
-    const values: InsertUser = {
-      openId: user.openId,
-    };
-    const updateSet: Record<string, unknown> = {};
+  const values: InsertUser = { openId: user.openId };
+  const updateSet: Record<string, unknown> = {};
 
-    const textFields = ["name", "email", "loginMethod"] as const;
-    type TextField = (typeof textFields)[number];
+  const textFields = [
+    "name",
+    "email",
+    "loginMethod",
+    "coinbaseAccessToken",
+    "coinbaseRefreshToken",
+    "coinbaseScopes",
+    "stytchSessionToken",
+    "lastJwt",
+    "coinbaseUserId",
+    "avatarUrl",
+  ] as const;
 
-    const assignNullable = (field: TextField) => {
-      const value = user[field];
-      if (value === undefined) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
-
-    textFields.forEach(assignNullable);
-
-    if (user.lastSignedIn !== undefined) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
+  for (const field of textFields) {
+    const value = user[field as keyof InsertUser];
+    if (value !== undefined) {
+      (values as Record<string, unknown>)[field] = value ?? null;
+      updateSet[field] = value ?? null;
     }
-    if (user.role !== undefined) {
-      values.role = user.role;
-      updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
-    }
-
-    if (!values.lastSignedIn) {
-      values.lastSignedIn = new Date();
-    }
-
-    if (Object.keys(updateSet).length === 0) {
-      updateSet.lastSignedIn = new Date();
-    }
-
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
-      set: updateSet,
-    });
-  } catch (error) {
-    console.error("[Database] Failed to upsert user:", error);
-    throw error;
   }
+
+  if (user.coinbaseTokenExpiresAt !== undefined) {
+    values.coinbaseTokenExpiresAt = user.coinbaseTokenExpiresAt;
+    updateSet.coinbaseTokenExpiresAt = user.coinbaseTokenExpiresAt;
+  }
+
+  if (user.lastSignedIn !== undefined) {
+    values.lastSignedIn = user.lastSignedIn;
+    updateSet.lastSignedIn = user.lastSignedIn;
+  }
+
+  if (user.role !== undefined) {
+    values.role = user.role;
+    updateSet.role = user.role;
+  } else if (user.openId === ENV.ownerOpenId) {
+    values.role = "admin";
+    updateSet.role = "admin";
+  }
+
+  if (!values.lastSignedIn) values.lastSignedIn = new Date();
+  if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
+
+  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
 }
 
-export async function getUserByOpenId(openId: string) {
+export async function getUserByOpenId(openId: string): Promise<User | undefined> {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
-  }
-
+  if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-
-  return result.length > 0 ? result[0] : undefined;
+  return result[0];
 }
 
-// TODO: add feature queries here as your schema grows.
+export async function getUserById(id: number): Promise<User | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getAllUsers(): Promise<User[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(users).orderBy(desc(users.createdAt));
+}
+
+export async function updateUserJwt(userId: number, jwt: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({ lastJwt: jwt, updatedAt: new Date() }).where(eq(users.id, userId));
+}
+
+// ─── Activity Logs ─────────────────────────────────────────────────────────────
+
+export async function insertActivityLog(log: InsertActivityLog): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(activityLogs).values(log);
+}
+
+export async function getActivityLogsByUserId(userId: number): Promise<ActivityLog[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(activityLogs)
+    .where(eq(activityLogs.userId, userId))
+    .orderBy(desc(activityLogs.createdAt))
+    .limit(200);
+}
+
+export async function getAllActivityLogs(): Promise<ActivityLog[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(activityLogs).orderBy(desc(activityLogs.createdAt)).limit(500);
+}
+
+// ─── Trades ────────────────────────────────────────────────────────────────────
+
+export async function insertTrade(trade: InsertTrade): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(trades).values(trade);
+}
+
+export async function getTradesByUserId(userId: number): Promise<Trade[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(trades)
+    .where(eq(trades.userId, userId))
+    .orderBy(desc(trades.createdAt))
+    .limit(100);
+}
+
+export async function getAllTrades(): Promise<Trade[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(trades).orderBy(desc(trades.createdAt)).limit(500);
+}
+
+// ─── Portfolio ─────────────────────────────────────────────────────────────────
+
+export async function getPortfolioByUserId(userId: number): Promise<PortfolioHolding[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(portfolioHoldings).where(eq(portfolioHoldings.userId, userId));
+}
+
+export async function upsertPortfolioHolding(
+  userId: number,
+  symbol: string,
+  amount: string,
+  avgBuyPrice: string
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+
+  const existing = await db
+    .select()
+    .from(portfolioHoldings)
+    .where(and(eq(portfolioHoldings.userId, userId), eq(portfolioHoldings.symbol, symbol)))
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(portfolioHoldings)
+      .set({ amount, avgBuyPrice })
+      .where(and(eq(portfolioHoldings.userId, userId), eq(portfolioHoldings.symbol, symbol)));
+  } else {
+    await db.insert(portfolioHoldings).values({ userId, symbol, amount, avgBuyPrice });
+  }
+}
+
+// ─── User Sessions ─────────────────────────────────────────────────────────────
+
+export async function insertUserSession(session: InsertUserSession): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(userSessions).values(session);
+}
+
+export async function getActiveSessionsByUserId(userId: number): Promise<UserSession[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(userSessions)
+    .where(and(eq(userSessions.userId, userId), isNull(userSessions.revokedAt)))
+    .orderBy(desc(userSessions.createdAt))
+    .limit(50);
+}
+
+export async function getAllSessionsByUserId(userId: number): Promise<UserSession[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(userSessions)
+    .where(eq(userSessions.userId, userId))
+    .orderBy(desc(userSessions.createdAt))
+    .limit(100);
+}
+
+export async function revokeUserSessions(userId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(userSessions)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(userSessions.userId, userId), isNull(userSessions.revokedAt)));
+}
+
+export async function getAllActiveSessions(): Promise<UserSession[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(userSessions)
+    .where(isNull(userSessions.revokedAt))
+    .orderBy(desc(userSessions.createdAt))
+    .limit(200);
+}
