@@ -1,5 +1,7 @@
-import { and, desc, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import pg from "pg";
+const { Pool } = pg;
 import {
   ActivityLog,
   InsertActivityLog,
@@ -17,24 +19,42 @@ import {
   userSessions,
   users,
 } from "../drizzle/schema";
-import { isNull } from "drizzle-orm";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _pool: pg.Pool | null = null;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      if (!_pool) {
+        const sslRaw = new URL(process.env.DATABASE_URL).searchParams.get("ssl");
+        let sslConfig: any = undefined;
+        if (sslRaw) {
+          try {
+            sslConfig = JSON.parse(sslRaw);
+          } catch {
+            sslConfig = { rejectUnauthorized: false };
+          }
+        } else if (process.env.DATABASE_URL.includes("amazonaws.com") || process.env.DATABASE_URL.includes("supabase") || process.env.DATABASE_URL.includes("neon")) {
+          sslConfig = { rejectUnauthorized: false };
+        }
+        
+        _pool = new Pool({
+          connectionString: process.env.DATABASE_URL,
+          ssl: sslConfig,
+          max: 10,
+        });
+      }
+      _db = drizzle(_pool);
     } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("[Database] Failed to connect:", message);
       _db = null;
     }
   }
   return _db;
 }
-
-// ─── Users ────────────────────────────────────────────────────────────────────
 
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) throw new Error("User openId is required for upsert");
@@ -90,7 +110,10 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   if (!values.lastSignedIn) values.lastSignedIn = new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
 
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  await db.insert(users).values(values).onConflictDoUpdate({ 
+    target: users.openId, 
+    set: updateSet 
+  });
 }
 
 export async function getUserByOpenId(openId: string): Promise<User | undefined> {
@@ -119,8 +142,6 @@ export async function updateUserJwt(userId: number, jwt: string): Promise<void> 
   await db.update(users).set({ lastJwt: jwt, updatedAt: new Date() }).where(eq(users.id, userId));
 }
 
-// ─── Activity Logs ─────────────────────────────────────────────────────────────
-
 export async function insertActivityLog(log: InsertActivityLog): Promise<void> {
   const db = await getDb();
   if (!db) return;
@@ -144,8 +165,6 @@ export async function getAllActivityLogs(): Promise<ActivityLog[]> {
   return db.select().from(activityLogs).orderBy(desc(activityLogs.createdAt)).limit(500);
 }
 
-// ─── Trades ────────────────────────────────────────────────────────────────────
-
 export async function insertTrade(trade: InsertTrade): Promise<void> {
   const db = await getDb();
   if (!db) return;
@@ -168,8 +187,6 @@ export async function getAllTrades(): Promise<Trade[]> {
   if (!db) return [];
   return db.select().from(trades).orderBy(desc(trades.createdAt)).limit(500);
 }
-
-// ─── Portfolio ─────────────────────────────────────────────────────────────────
 
 export async function getPortfolioByUserId(userId: number): Promise<PortfolioHolding[]> {
   const db = await getDb();
@@ -201,8 +218,6 @@ export async function upsertPortfolioHolding(
     await db.insert(portfolioHoldings).values({ userId, symbol, amount, avgBuyPrice });
   }
 }
-
-// ─── User Sessions ─────────────────────────────────────────────────────────────
 
 export async function insertUserSession(session: InsertUserSession): Promise<void> {
   const db = await getDb();
